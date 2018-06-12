@@ -379,7 +379,6 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
 
     // PORTING NOTE: Multi-tab only.
     this.sharedClientState.trackQueryUpdate(targetId, 'rejected', err);
-    this.sharedClientState.removeLocalQueryTarget(targetId);
 
     const limboKey = this.limboKeysByTarget[targetId];
     if (limboKey) {
@@ -544,6 +543,9 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
   private async removeAndCleanupQuery(query: Query): Promise<void> {
     const queryView = this.queryViewsByQuery.get(query)!;
     assert(!!queryView, 'Trying to unlisten on query not found:' + query);
+
+    // PORTING NOTE: Multi-tab only.
+    this.sharedClientState.removeLocalQueryTarget(queryView.targetId);
 
     this.queryViewsByQuery.delete(queryView.query);
     delete this.queryViewsByTarget[queryView.targetId];
@@ -727,7 +729,9 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
     if (this.queryViewsByTarget[targetId]) {
       if (state === 'rejected') {
         const queryView = this.queryViewsByTarget[targetId];
-        return this.removeAndCleanupQuery(queryView.query).then(() => {
+        this.remoteStore.unlisten(targetId);
+        await this.localStore.removeQuery(queryView.query);
+        return this.removeAndCleanupQuery(queryView.query).then( () =>  {
           this.errorHandler!(queryView.query, error);
         });
       } else {
@@ -763,10 +767,13 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
 
     for (const targetId of removed) {
       const queryView = this.queryViewsByTarget[targetId];
-      assert(!!queryView, 'Trying to remove an inactive target');
-      this.remoteStore.unlisten(targetId);
-      await this.localStore.releaseQuery(queryView.query);
-      await this.removeAndCleanupQuery(queryView.query);
+      // Check that the query is still active since the query might have been
+      // removed if the backend rejected it.
+      if (queryView) {
+        this.remoteStore.unlisten(targetId);
+        await this.localStore.releaseQuery(queryView.query);
+        await this.removeAndCleanupQuery(queryView.query);
+      }
     }
   }
 

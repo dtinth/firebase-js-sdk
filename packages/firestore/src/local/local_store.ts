@@ -715,6 +715,7 @@ export class LocalStore {
           );
           this.localViewReferences.removeReferencesForId(queryData!.targetId);
           delete this.targetIds[queryData!.targetId];
+
           if (this.garbageCollector.isEager) {
             return this.queryCache.removeQueryData(txn, queryData!);
           } else {
