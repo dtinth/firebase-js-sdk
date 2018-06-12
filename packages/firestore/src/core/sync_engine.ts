@@ -29,7 +29,7 @@ import { MaybeDocument, NoDocument } from '../model/document';
 import { DocumentKey } from '../model/document_key';
 import { Mutation } from '../model/mutation';
 import { MutationBatchResult } from '../model/mutation_batch';
-import { RemoteEvent } from '../remote/remote_event';
+import { RemoteEvent, TargetChange } from '../remote/remote_event';
 import { RemoteStore } from '../remote/remote_store';
 import { RemoteSyncer } from '../remote/remote_syncer';
 import { assert, fail } from '../util/assert';
@@ -40,6 +40,7 @@ import { ObjectMap } from '../util/obj_map';
 import { Deferred } from '../util/promise';
 import { SortedMap } from '../util/sorted_map';
 import { isNullOrUndefined } from '../util/types';
+import * as objUtils from '../util/obj';
 
 import { Query } from './query';
 import { SnapshotVersion } from './snapshot_version';
@@ -57,6 +58,7 @@ import {
   LimboDocumentChange,
   RemovedLimboDocument,
   View,
+  ViewChange,
   ViewDocumentChanges
 } from './view';
 import { ViewSnapshot } from './view_snapshot';
@@ -181,55 +183,71 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
     );
 
     return this.localStore.allocateQuery(query).then(queryData => {
-      return this.localStore
-        .executeQuery(query)
-        .then(docs => {
-          return this.localStore
-            .remoteDocumentKeys(queryData.targetId)
-            .then(remoteKeys => {
-              const view = new View(query, remoteKeys);
-              const viewDocChanges = view.computeDocChanges(docs);
-              const viewChange = view.applyChanges(viewDocChanges);
-              assert(
-                viewChange.limboChanges.length === 0,
-                'View returned limbo docs before target ack from the server.'
-              );
-              assert(
-                !!viewChange.snapshot,
-                'applyChanges for new view should always return a snapshot'
-              );
+      const status = this.sharedClientState.addLocalQueryTarget(
+        queryData.targetId
+      );
+      return this.executeQuery(queryData, status === 'current').then(() => {
+        return queryData.targetId;
+      });
+    });
+  }
 
-              const data = new QueryView(
-                query,
-                queryData.targetId,
-                queryData.resumeToken,
-                view
-              );
-              this.queryViewsByQuery.set(query, data);
-              this.queryViewsByTarget[queryData.targetId] = data;
-              this.viewHandler!([viewChange.snapshot!]);
-              this.remoteStore.listen(queryData);
-            });
-        })
-        .then(() => {
-          return queryData.targetId;
+  executeQuery(queryData: QueryData, current?: boolean): Promise<void> {
+    return this.localStore.executeQuery(queryData.query).then(docs => {
+      return this.localStore
+        .remoteDocumentKeys(queryData.targetId)
+        .then(remoteKeys => {
+          const view = new View(queryData.query, remoteKeys);
+          const viewDocChanges = view.computeDocChanges(docs);
+          const viewChange = view.applyChanges(viewDocChanges, current);
+          assert(
+            viewChange.limboChanges.length === 0,
+            'View returned limbo docs before target ack from the server.'
+          );
+          assert(
+            !!viewChange.snapshot,
+            'applyChanges for new view should always return a snapshot'
+          );
+
+          const data = new QueryView(
+            queryData.query,
+            queryData.targetId,
+            queryData.resumeToken,
+            view
+          );
+          this.queryViewsByQuery.set(queryData.query, data);
+          this.queryViewsByTarget[queryData.targetId] = data;
+          this.viewHandler!([viewChange.snapshot!]);
+          this.remoteStore.listen(queryData);
         });
     });
   }
 
   /** Stops listening to the query. */
-  unlisten(query: Query): Promise<void> {
+  async unlisten(query: Query): Promise<void> {
     this.assertSubscribed('unlisten()');
 
     const queryView = this.queryViewsByQuery.get(query)!;
     assert(!!queryView, 'Trying to unlisten on query not found:' + query);
 
-    return this.localStore.releaseQuery(query).then(() => {
-      this.remoteStore.unlisten(queryView.targetId);
-      return this.removeAndCleanupQuery(queryView).then(() => {
-        return this.localStore.collectGarbage();
-      });
-    });
+    this.sharedClientState.removeLocalQueryTarget(queryView.targetId);
+    const remainsActive = this.sharedClientState
+      .getAllActiveQueryTargets()
+      .has(queryView.targetId);
+
+    if (this.isPrimary && remainsActive) {
+      return; // We need to keep the query for other clients.
+    }
+
+    this.remoteStore.unlisten(queryView.targetId);
+    await this.removeAndCleanupQuery(query);
+
+    if (this.isPrimary) {
+      await this.localStore.releaseQuery(query);
+      await this.localStore.collectGarbage();
+    } else {
+      await this.localStore.removeQuery(query);
+    }
   }
 
   /**
@@ -323,6 +341,16 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
     this.assertSubscribed('applyRemoteEvent()');
 
     return this.localStore.applyRemoteEvent(remoteEvent).then(changes => {
+      // PORTING NOTE: Multi-tab only.
+      objUtils.forEachNumber(
+        remoteEvent.targetChanges,
+        (targetId, targetChange) => {
+          this.sharedClientState.trackQueryUpdate(
+            targetId,
+            targetChange.current ? 'current' : 'not-current'
+          );
+        }
+      );
       return this.emitNewSnapsAndNotifyLocalStore(changes, remoteEvent);
     });
   }
@@ -348,6 +376,11 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
 
   rejectListen(targetId: TargetId, err: FirestoreError): Promise<void> {
     this.assertSubscribed('rejectListens()');
+
+    // PORTING NOTE: Multi-tab only.
+    this.sharedClientState.trackQueryUpdate(targetId, 'rejected', err);
+    this.sharedClientState.removeLocalQueryTarget(targetId);
+
     const limboKey = this.limboKeysByTarget[targetId];
     if (limboKey) {
       // Since this query failed, we won't want to manually unlisten to it.
@@ -382,7 +415,7 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
       const queryView = this.queryViewsByTarget[targetId];
       assert(!!queryView, 'Unknown targetId: ' + targetId);
       return this.localStore.releaseQuery(queryView.query).then(() => {
-        return this.removeAndCleanupQuery(queryView).then(() => {
+        return this.removeAndCleanupQuery(queryView.query).then(() => {
           this.errorHandler!(queryView.query, err);
         });
       });
@@ -508,12 +541,17 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
     }
   }
 
-  private removeAndCleanupQuery(queryView: QueryView): Promise<void> {
+  private async removeAndCleanupQuery(query: Query): Promise<void> {
+    const queryView = this.queryViewsByQuery.get(query)!;
+    assert(!!queryView, 'Trying to unlisten on query not found:' + query);
+
     this.queryViewsByQuery.delete(queryView.query);
     delete this.queryViewsByTarget[queryView.targetId];
 
-    this.limboDocumentRefs.removeReferencesForId(queryView.targetId);
-    return this.gcLimboDocuments();
+    if (this.isPrimary) {
+      this.limboDocumentRefs.removeReferencesForId(queryView.targetId);
+      await this.gcLimboDocuments();
+    }
   }
 
   private updateTrackedLimbos(
@@ -578,7 +616,7 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
 
   private async emitNewSnapsAndNotifyLocalStore(
     changes: MaybeDocumentMap,
-    remoteEvent?: RemoteEvent
+    remoteEventOrCurrent?: RemoteEvent | boolean
   ): Promise<void> {
     const newSnaps: ViewSnapshot[] = [];
     const docChangesInAllViews: LocalViewChanges[] = [];
@@ -600,12 +638,22 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
             });
           })
           .then((viewDocChanges: ViewDocumentChanges) => {
-            const targetChange =
-              remoteEvent && remoteEvent.targetChanges[queryView.targetId];
-            const viewChange = queryView.view.applyChanges(
-              viewDocChanges,
-              targetChange
-            );
+            let viewChange: ViewChange;
+
+            if (remoteEventOrCurrent instanceof RemoteEvent) {
+              const targetChange =
+                remoteEventOrCurrent.targetChanges[queryView.targetId];
+              viewChange = queryView.view.applyChanges(
+                viewDocChanges,
+                targetChange
+              );
+            } else {
+              viewChange = queryView.view.applyChanges(
+                viewDocChanges,
+                remoteEventOrCurrent
+              );
+            }
+
             return this.updateTrackedLimbos(
               queryView.targetId,
               viewChange.limboChanges
@@ -671,22 +719,55 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
   }
 
   // PORTING NOTE: Multi-tab only
-  applyTargetState(
+  async applyTargetState(
     targetId: TargetId,
     state: QueryTargetState,
     error?: FirestoreError
   ): Promise<void> {
-    // TODO(multitab): Implement this
-    return Promise.resolve();
+    if (this.queryViewsByTarget[targetId]) {
+      if (state === 'rejected') {
+        const queryView = this.queryViewsByTarget[targetId];
+        return this.removeAndCleanupQuery(queryView.query).then(() => {
+          this.errorHandler!(queryView.query, error);
+        });
+      } else {
+        const changes = await this.localStore.getNewDocumentChanges();
+        await this.emitNewSnapsAndNotifyLocalStore(
+          changes,
+          state === 'current'
+        );
+      }
+    }
   }
 
   // PORTING NOTE: Multi-tab only
-  applyActiveTargetsChange(
+  async applyActiveTargetsChange(
     added: TargetId[],
     removed: TargetId[]
   ): Promise<void> {
-    // TODO(multitab): Implement this
-    return Promise.resolve();
+    if (!this.isPrimary) {
+      return;
+    }
+
+    for (const targetId of added) {
+      assert(
+        !this.queryViewsByTarget[targetId],
+        'Trying to add an already active target'
+      );
+      const queryData = await this.localStore.getQueryDataForTarget(targetId);
+      if (queryData) {
+        await this.localStore.allocateQuery(queryData.query);
+        await this.executeQuery(queryData);
+      }
+    }
+
+    for (const targetId of removed) {
+      const queryView = this.queryViewsByTarget[targetId];
+      assert(!!queryView, 'Trying to remove an inactive target');
+      this.remoteStore.unlisten(targetId);
+      await this.localStore.releaseQuery(queryView.query);
+      await this.removeAndCleanupQuery(queryView.query);
+    }
   }
 
   async enableNetwork(): Promise<void> {

@@ -700,7 +700,10 @@ export class LocalStore {
     });
   }
 
-  /** Unpin all the documents associated with the given query. */
+  /**
+   * Unpin all the documents associated with the given query and remove the
+   * query data from the query cache.
+   */
   releaseQuery(query: Query): Promise<void> {
     return this.persistence.runTransaction('Release query', true, txn => {
       return this.queryCache
@@ -733,6 +736,25 @@ export class LocalStore {
           } else {
             return PersistencePromise.resolve();
           }
+        });
+    });
+  }
+
+  /**
+   * Locally unpin all the documents associated with the given query, but keep
+   * persisted query data.
+   */
+  removeQuery(query: Query): Promise<void> {
+    return this.persistence.runTransaction('Remove query', false, txn => {
+      return this.queryCache
+        .getQueryData(txn, query)
+        .next((queryData: QueryData | null) => {
+          assert(
+            queryData != null,
+            'Tried to release nonexistent query: ' + query
+          );
+          this.localViewReferences.removeReferencesForId(queryData!.targetId);
+          delete this.targetIds[queryData!.targetId];
         });
     });
   }
@@ -937,5 +959,23 @@ export class LocalStore {
         });
     });
     return promiseChain;
+  }
+
+  // PORTING NOTE: Multi-tab only.
+  getQueryDataForTarget(targetId: TargetId): Promise<QueryData | null> {
+    return this.persistence.runTransaction('Get query data', false, txn => {
+      return this.queryCache.getQueryDataForTarget(txn, targetId);
+    });
+  }
+
+  // PORTING NOTE: Multi-tab only.
+  getNewDocumentChanges(): Promise<MaybeDocumentMap> {
+    return this.persistence.runTransaction(
+      'Get new document changes',
+      false,
+      txn => {
+        return this.remoteDocuments.getNewDocumentChanges(txn);
+      }
+    );
   }
 }

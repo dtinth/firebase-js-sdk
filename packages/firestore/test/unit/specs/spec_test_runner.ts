@@ -399,7 +399,6 @@ abstract class TestRunner {
       useProto3Json: true
     });
     this.persistence = this.getPersistence(this.serializer);
-    this.sharedClientState = this.getSharedClientState();
 
     this.useGarbageCollection = config.useGarbageCollection;
 
@@ -437,7 +436,7 @@ abstract class TestRunner {
       this.queue,
       onlineStateChangedHandler
     );
-
+    this.sharedClientState = this.getSharedClientState();
     this.syncEngine = new SyncEngine(
       this.localStore,
       this.remoteStore,
@@ -890,6 +889,7 @@ abstract class TestRunner {
       await this.localStore.start();
       await this.remoteStore.start();
       await this.syncEngine.start();
+      await this.sharedClientState.start();
 
       const deferred = new Deferred<void>();
       // We need to wait for the processing in `applyPrimaryState` to complete,
