@@ -402,27 +402,23 @@ describeSpec('Listens:', [], () => {
     }
   );
 
-  specTest(
-      'Query is rejected and re-listened to',
-      ['multi-client'],
-      () => {
-        const query = Query.atPath(path('collection'));
+  specTest('Query is rejected and re-listened to', ['multi-client'], () => {
+    const query = Query.atPath(path('collection'));
 
-        return spec().withGCEnabled(false)
-            .userListens(query)
-            .watchRemoves(
-                query,
-                new RpcError(Code.RESOURCE_EXHAUSTED, 'Resource exhausted')
-            )
-            .expectEvents(query, { errorCode: Code.RESOURCE_EXHAUSTED })
-            .userListens(query)
-        .watchAcks(query)
-        .watchCurrents(query, 'resume-token-1000')
-        .watchSnapshots(1000)
-        .expectEvents(query, {  });
-      }
-  );
-
+    return spec()
+      .withGCEnabled(false)
+      .userListens(query)
+      .watchRemoves(
+        query,
+        new RpcError(Code.RESOURCE_EXHAUSTED, 'Resource exhausted')
+      )
+      .expectEvents(query, { errorCode: Code.RESOURCE_EXHAUSTED })
+      .userListens(query)
+      .watchAcks(query)
+      .watchCurrents(query, 'resume-token-1000')
+      .watchSnapshots(1000)
+      .expectEvents(query, {});
+  });
 
   specTest('Query is executed by primary client', ['multi-client'], () => {
     const query = Query.atPath(path('collection'));
@@ -603,7 +599,7 @@ describeSpec('Listens:', [], () => {
         .watchCurrents(query, 'resume-token-1000')
         .watchSnapshots(1000)
         .client(1)
-        .expectEvents(query, {  });
+        .expectEvents(query, {});
     }
   );
 });

@@ -351,7 +351,7 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
           );
         }
       );
-       return this.emitNewSnapsAndNotifyLocalStore(changes, remoteEvent);
+      return this.emitNewSnapsAndNotifyLocalStore(changes, remoteEvent);
     });
   }
 
@@ -653,11 +653,14 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
               );
 
               // PORTING NOTE: Multi-tab only
-              if (targetChange && viewChange.limboChanges.length  > 0) {
+              if (targetChange && viewChange.limboChanges.length > 0) {
                 // If we have outstanding limbo documents for this query,
                 // mark the query as 'not-current' so that it is raised with
                 // 'isFromCache'.
-                this.sharedClientState.trackQueryUpdate(queryView.targetId, 'not-current');
+                this.sharedClientState.trackQueryUpdate(
+                  queryView.targetId,
+                  'not-current'
+                );
               }
             } else {
               viewChange = queryView.view.applyChanges(
@@ -738,12 +741,15 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
   ): Promise<void> {
     // Apply the target state if the target is either actively being listened to
     // or a limbo target change (which could theoretically apply to any target).
-    if (this.queryViewsByTarget[targetId] || this.limboIdGenerator.covers(targetId)) {
+    if (
+      this.queryViewsByTarget[targetId] ||
+      this.limboIdGenerator.covers(targetId)
+    ) {
       if (state === 'rejected') {
         const queryView = this.queryViewsByTarget[targetId];
         this.remoteStore.unlisten(targetId);
         await this.localStore.removeQuery(queryView.query);
-        return this.removeAndCleanupQuery(queryView.query).then( () =>  {
+        return this.removeAndCleanupQuery(queryView.query).then(() => {
           this.errorHandler!(queryView.query, error);
         });
       } else {

@@ -76,7 +76,8 @@ export class TargetIdGenerator {
   }
 
   private seek(targetId: TargetId): void {
-    assert(this.covers(targetId),
+    assert(
+      this.covers(targetId),
       'Cannot supply target ID from different generator ID'
     );
     this.nextId = targetId;
@@ -95,5 +96,4 @@ export class TargetIdGenerator {
     // Sync engine assigns target IDs for limbo document detection.
     return new TargetIdGenerator(GeneratorIds.SyncEngine);
   }
-
 }
