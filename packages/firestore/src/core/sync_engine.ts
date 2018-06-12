@@ -558,16 +558,23 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
     targetId: TargetId,
     limboChanges: LimboDocumentChange[]
   ): Promise<void> {
-    for (const limboChange of limboChanges) {
-      if (limboChange instanceof AddedLimboDocument) {
-        this.limboDocumentRefs.addReference(limboChange.key, targetId);
-        this.trackLimboChange(limboChange);
-      } else if (limboChange instanceof RemovedLimboDocument) {
-        log.debug(LOG_TAG, 'Document no longer in limbo: ' + limboChange.key);
-        this.limboDocumentRefs.removeReference(limboChange.key, targetId);
-      } else {
-        fail('Unknown limbo change: ' + JSON.stringify(limboChange));
+    if (limboChanges.length > 0) {
+      for (const limboChange of limboChanges) {
+        if (limboChange instanceof AddedLimboDocument) {
+          this.limboDocumentRefs.addReference(limboChange.key, targetId);
+          this.trackLimboChange(limboChange);
+        } else if (limboChange instanceof RemovedLimboDocument) {
+          log.debug(LOG_TAG, 'Document no longer in limbo: ' + limboChange.key);
+          this.limboDocumentRefs.removeReference(limboChange.key, targetId);
+        } else {
+          fail('Unknown limbo change: ' + JSON.stringify(limboChange));
+        }
       }
+
+      this.sharedClientState.trackQueryUpdate(
+          targetId,
+          targetChange.current ? 'current' : 'not-current'
+      );
     }
     return this.gcLimboDocuments();
   }
@@ -724,7 +731,8 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
     state: QueryTargetState,
     error?: FirestoreError
   ): Promise<void> {
-    if (this.queryViewsByTarget[targetId]) {
+    // Apply the target if it is active or a limbo target change.
+    if (this.queryViewsByTarget[targetId] || this.targetIdGenerator.contains(targetId)) {
       if (state === 'rejected') {
         const queryView = this.queryViewsByTarget[targetId];
         return this.removeAndCleanupQuery(queryView.query).then(() => {
