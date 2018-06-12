@@ -255,7 +255,7 @@ describeSpec('Limbo Documents:', [], () => {
     );
   });
 
-  specTest('Limbo docs are resolved by primary client', ['exclusive', 'multi-client'], () => {
+  specTest('Limbo docs are resolved by primary client', ['multi-client'], () => {
     const query = Query.atPath(path('collection'));
     const doc1 = doc('collection/a', 1000, { key: 'a' });
     const doc2 = doc('collection/b', 1001, { key: 'b' });
@@ -269,11 +269,14 @@ describeSpec('Limbo Documents:', [], () => {
         .client(0)
         .expectListen(query)
         .watchAcksFull(query, 1002, doc1, doc2)
+        .client(1)
+        .expectEvents(query, { added: [doc1, doc2] })
+        .client(0)
         .watchRemovesDoc(doc2.key, query)
         .watchSnapshots(1003)
         .expectLimboDocs(doc2.key)
         .client(1)
-        .expectEvents(query, { added: [doc1, doc2], fromCache: false })
+        .expectEvents(query, {  fromCache: true })
         .client(0)
         .ackLimbo(1004, deletedDoc2)
         .expectLimboDocs()

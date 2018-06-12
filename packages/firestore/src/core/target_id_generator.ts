@@ -70,13 +70,13 @@ export class TargetIdGenerator {
     return this.next();
   }
 
-
-  contains(targetId: TargetId) {
+  /** Verifies that the provided ID lies within this generators ID space. */
+  covers(targetId: TargetId) {
     return (targetId & RESERVED_BITS) === this.generatorId;
   }
 
   private seek(targetId: TargetId): void {
-    assert(this.contains(targetId),
+    assert(this.covers(targetId),
       'Cannot supply target ID from different generator ID'
     );
     this.nextId = targetId;

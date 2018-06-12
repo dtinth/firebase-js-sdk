@@ -139,7 +139,7 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
   private mutationUserCallbacks = {} as {
     [uidKey: string]: SortedMap<BatchId, Deferred<void>>;
   };
-  private targetIdGenerator = TargetIdGenerator.forSyncEngine();
+  private limboIdGenerator = TargetIdGenerator.forSyncEngine();
   private isPrimary = false;
 
   constructor(
@@ -351,7 +351,7 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
           );
         }
       );
-      return this.emitNewSnapsAndNotifyLocalStore(changes, remoteEvent);
+       return this.emitNewSnapsAndNotifyLocalStore(changes, remoteEvent);
     });
   }
 
@@ -572,11 +572,6 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
           fail('Unknown limbo change: ' + JSON.stringify(limboChange));
         }
       }
-
-      this.sharedClientState.trackQueryUpdate(
-          targetId,
-          targetChange.current ? 'current' : 'not-current'
-      );
     }
     return this.gcLimboDocuments();
   }
@@ -585,7 +580,7 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
     const key = limboChange.key;
     if (!this.limboTargetsByKey.get(key)) {
       log.debug(LOG_TAG, 'New document in limbo: ' + key);
-      const limboTargetId = this.targetIdGenerator.next();
+      const limboTargetId = this.limboIdGenerator.next();
       const query = Query.atPath(key.path);
       this.limboKeysByTarget[limboTargetId] = key;
       this.remoteStore.listen(
@@ -656,6 +651,14 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
                 viewDocChanges,
                 targetChange
               );
+
+              // PORTING NOTE: Multi-tab only
+              if (targetChange && viewChange.limboChanges.length  > 0) {
+                // If we have outstanding limbo documents for this query,
+                // mark the query as 'not-current' so that it is raised with
+                // 'isFromCache'.
+                this.sharedClientState.trackQueryUpdate(queryView.targetId, 'not-current');
+              }
             } else {
               viewChange = queryView.view.applyChanges(
                 viewDocChanges,
@@ -733,8 +736,9 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
     state: QueryTargetState,
     error?: FirestoreError
   ): Promise<void> {
-    // Apply the target if it is active or a limbo target change.
-    if (this.queryViewsByTarget[targetId] || this.targetIdGenerator.contains(targetId)) {
+    // Apply the target state if the target is either actively being listened to
+    // or a limbo target change (which could theoretically apply to any target).
+    if (this.queryViewsByTarget[targetId] || this.limboIdGenerator.covers(targetId)) {
       if (state === 'rejected') {
         const queryView = this.queryViewsByTarget[targetId];
         this.remoteStore.unlisten(targetId);
