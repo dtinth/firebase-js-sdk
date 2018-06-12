@@ -742,51 +742,51 @@ describeSpec('Writes:', [], () => {
     }
   );
 
-  specTest(
-    'Pending write is acknowledged by primary client',
-    ['multi-client'],
-    () => {
-      const query = Query.atPath(path('collection'));
-      const localDoc = doc(
-        'collection/a',
-        0,
-        { v: 1 },
-        { hasLocalMutations: true }
-      );
-      const remoteDoc = doc('collection/a', 1000, { v: 1 });
-      return client(0)
-        .becomeVisible()
-        .userListens(query)
-        .watchAcksFull(query, 500)
-        .expectEvents(query, {})
-        .client(1)
-        .userListens(query)
-        .expectEvents(query, {})
-        .userSets('collection/a', { v: 1 })
-        .expectEvents(query, {
-          hasPendingWrites: true,
-          added: [localDoc]
-        })
-        .client(0)
-        .expectEvents(query, {
-          hasPendingWrites: true,
-          added: [localDoc]
-        })
-        .writeAcks('collection/a', 1000, { expectUserCallback: false })
-        .watchSends({ affects: [query] }, remoteDoc)
-        .watchSnapshots(1000)
-        .expectEvents(query, {
-          metadata: [remoteDoc]
-        })
-        .client(1)
-        .expectUserCallbacks({
-          acknowledged: ['collection/a']
-        })
-        .expectEvents(query, {
-          metadata: [remoteDoc]
-        });
-    }
-  );
+  // specTest(
+  //   'Pending write is acknowledged by primary client',
+  //   ['multi-client'],
+  //   () => {
+  //     const query = Query.atPath(path('collection'));
+  //     const localDoc = doc(
+  //       'collection/a',
+  //       0,
+  //       { v: 1 },
+  //       { hasLocalMutations: true }
+  //     );
+  //     const remoteDoc = doc('collection/a', 1000, { v: 1 });
+  //     return client(0)
+  //       .becomeVisible()
+  //       .userListens(query)
+  //       .watchAcksFull(query, 500)
+  //       .expectEvents(query, {})
+  //       .client(1)
+  //       .userListens(query)
+  //       .expectEvents(query, {})
+  //       .userSets('collection/a', { v: 1 })
+  //       .expectEvents(query, {
+  //         hasPendingWrites: true,
+  //         added: [localDoc]
+  //       })
+  //       .client(0)
+  //       .expectEvents(query, {
+  //         hasPendingWrites: true,
+  //         added: [localDoc]
+  //       })
+  //       .writeAcks('collection/a', 1000, { expectUserCallback: false })
+  //       .watchSends({ affects: [query] }, remoteDoc)
+  //       .watchSnapshots(1000)
+  //       .expectEvents(query, {
+  //         metadata: [remoteDoc]
+  //       })
+  //       .client(1)
+  //       .expectUserCallbacks({
+  //         acknowledged: ['collection/a']
+  //       })
+  //       .expectEvents(query, {
+  //         metadata: [remoteDoc]
+  //       });
+  //   }
+  // );
 
   specTest(
     'Pending write is rejected by primary client',
@@ -836,4 +836,51 @@ describeSpec('Writes:', [], () => {
         });
     }
   );
+
+  specTest('Held write is released by primary client', ['multi-client'], () => {
+    const query = Query.atPath(path('collection'));
+    const docALocal = doc(
+      'collection/a',
+      0,
+      { v: 1 },
+      { hasLocalMutations: true }
+    );
+    const docA = doc('collection/a', 1000, { v: 1 });
+
+    const docBLocal = doc(
+      'collection/b',
+      0,
+      { v: 1 },
+      { hasLocalMutations: true }
+    );
+    const docB = doc('collection/b', 2000, { v: 1 });
+
+    return (
+      client(0)
+        .userListens(query)
+        .watchAcksFull(query, 500)
+        .expectEvents(query, {})
+        .client(1)
+        .userSets('collection/a', { v: 1 })
+        .client(0)
+        .expectEvents(query, {
+          hasPendingWrites: true,
+          added: [docALocal]
+        })
+        // Ack write but without a watch event.
+        .writeAcks('collection/a', 1000, { expectUserCallback: false })
+        .client(1) // No events
+        .client(0)
+        // Watcher catches up.
+        .watchSends({ affects: [query] }, docA)
+        .watchSnapshots(2000)
+        .expectEvents(query, {
+          metadata: [docA]
+        })
+        .client(1)
+        .expectUserCallbacks({
+          acknowledged: ['collection/a']
+        })
+    );
+  });
 });

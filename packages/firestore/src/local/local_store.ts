@@ -49,7 +49,7 @@ import { QueryData, QueryPurpose } from './query_data';
 import { ReferenceSet } from './reference_set';
 import { RemoteDocumentCache } from './remote_document_cache';
 import { RemoteDocumentChangeBuffer } from './remote_document_change_buffer';
-import { ClientId } from './shared_client_state';
+import { ClientId, SharedClientState } from './shared_client_state';
 
 const LOG_TAG = 'LocalStore';
 
@@ -165,7 +165,8 @@ export class LocalStore {
      * cached (e.g. if they are no longer retained by the above reference sets
      * and the garbage collector is performing eager collection).
      */
-    private garbageCollector: GarbageCollector
+    private garbageCollector: GarbageCollector,
+    private sharedClientState: SharedClientState
   ) {
     this.mutationQueue = persistence.getMutationQueue(initialUser);
     this.remoteDocuments = persistence.getRemoteDocumentCache();
@@ -885,9 +886,16 @@ export class LocalStore {
   ): PersistencePromise<DocumentKeySet> {
     let promiseChain = PersistencePromise.resolve();
     for (const batchResult of batchResults) {
-      promiseChain = promiseChain.next(() =>
-        this.applyWriteToRemoteDocuments(txn, batchResult, documentBuffer)
-      );
+      promiseChain = promiseChain
+        .next(() =>
+          this.applyWriteToRemoteDocuments(txn, batchResult, documentBuffer)
+        )
+        .next(() =>
+          this.sharedClientState.trackMutationResult(
+            batchResult.batch.batchId,
+            'acknowledged'
+          )
+        );
     }
     return promiseChain.next(() => {
       return this.removeMutationBatches(

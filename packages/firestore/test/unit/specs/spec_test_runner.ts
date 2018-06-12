@@ -413,10 +413,12 @@ abstract class TestRunner {
   private init(): void {
     const garbageCollector = this.getGarbageCollector();
 
+    this.sharedClientState = this.getSharedClientState();
     this.localStore = new LocalStore(
       this.persistence,
       this.user,
-      garbageCollector
+      garbageCollector,
+      this.sharedClientState
     );
 
     this.connection = new MockConnection(this.queue);
@@ -436,7 +438,6 @@ abstract class TestRunner {
       this.queue,
       onlineStateChangedHandler
     );
-    this.sharedClientState = this.getSharedClientState();
     this.syncEngine = new SyncEngine(
       this.localStore,
       this.remoteStore,
