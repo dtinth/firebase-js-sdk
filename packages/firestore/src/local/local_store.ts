@@ -166,6 +166,7 @@ export class LocalStore {
      * and the garbage collector is performing eager collection).
      */
     private garbageCollector: GarbageCollector,
+    /** Handles held write acknowledgment for multi-tab writes. */
     private sharedClientState: SharedClientState
   ) {
     this.mutationQueue = persistence.getMutationQueue(initialUser);

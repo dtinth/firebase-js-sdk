@@ -199,7 +199,11 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
         .then(remoteKeys => {
           const view = new View(queryData.query, remoteKeys);
           const viewDocChanges = view.computeDocChanges(docs);
-          const viewChange = view.applyChanges(viewDocChanges, current);
+          const viewChange = view.applyChanges(
+            viewDocChanges,
+            /* updateLimboDocuments= */ this.isPrimary,
+            current
+          );
           assert(
             viewChange.limboChanges.length === 0,
             'View returned limbo docs before target ack from the server.'
@@ -267,7 +271,9 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
       .then(result => {
         this.sharedClientState.addLocalPendingMutation(result.batchId);
         this.addMutationCallback(result.batchId, userCallback);
-        return this.emitNewSnapsAndNotifyLocalStore(result.changes);
+        return this.emitNewSnapsAndNotifyLocalStore(
+          result.changes /* updateLimboDocuments= */
+        );
       })
       .then(() => {
         return this.remoteStore.fillWritePipeline();
@@ -648,6 +654,7 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
                 remoteEventOrCurrent.targetChanges[queryView.targetId];
               viewChange = queryView.view.applyChanges(
                 viewDocChanges,
+                /* updateLimboDocuments= */ this.isPrimary,
                 targetChange
               );
 
@@ -664,6 +671,7 @@ export class SyncEngine implements RemoteSyncer, SharedClientStateSyncer {
             } else {
               viewChange = queryView.view.applyChanges(
                 viewDocChanges,
+                /* updateLimboDocuments= */ this.isPrimary,
                 remoteEventOrCurrent
               );
             }

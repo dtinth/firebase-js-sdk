@@ -228,12 +228,15 @@ export class View {
    * target change.
    *
    * @param docChanges The set of changes to make to the view's docs.
+   * @param updateLimboDocuments Whether to update limbo documents based on this
+   * change.
    * @param currentOrTargetChange The new CURRENT state of the target or a
    * new target change to apply for computing limbo docs and sync state.
    * @return A new ViewChange with the given docs, changes, and sync state.
    */
   applyChanges(
     docChanges: ViewDocumentChanges,
+    updateLimboDocuments: boolean,
     currentOrTargetChange?: boolean | TargetChange
   ): ViewChange {
     assert(!docChanges.needsRefill, 'Cannot apply changes that need a refill');
@@ -249,15 +252,15 @@ export class View {
       );
     });
 
-    let limboChanges = [];
-
     if (typeof currentOrTargetChange === 'boolean') {
       this.applySyncStateChange(currentOrTargetChange);
     } else {
       this.applyTargetChange(currentOrTargetChange);
-      limboChanges = this.updateLimboDocuments();
     }
 
+    const limboChanges = updateLimboDocuments
+      ? this.updateLimboDocuments()
+      : [];
     const synced = this.limboDocuments.size === 0 && this.current;
     const newSyncState = synced ? SyncState.Synced : SyncState.Local;
     const syncStateChanged = newSyncState !== this.syncState;
@@ -295,12 +298,15 @@ export class View {
       // are guaranteed to get a new TargetChange that sets `current` back to
       // true once the client is back online.
       this.current = false;
-      return this.applyChanges({
-        documentSet: this.documentSet,
-        changeSet: new DocumentChangeSet(),
-        mutatedKeys: this.mutatedKeys,
-        needsRefill: false
-      });
+      return this.applyChanges(
+        {
+          documentSet: this.documentSet,
+          changeSet: new DocumentChangeSet(),
+          mutatedKeys: this.mutatedKeys,
+          needsRefill: false
+        },
+        /* updateLimboDocuments= */ false
+      );
     } else {
       // No effect, just return a no-op ViewChange.
       return { limboChanges: [] };
