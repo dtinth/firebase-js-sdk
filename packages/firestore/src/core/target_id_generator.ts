@@ -71,7 +71,7 @@ export class TargetIdGenerator {
   }
 
   /** Verifies that the provided ID lies within this generators ID space. */
-  covers(targetId: TargetId) {
+  covers(targetId: TargetId) : boolean {
     return (targetId & RESERVED_BITS) === this.generatorId;
   }
 

@@ -847,14 +847,6 @@ describeSpec('Writes:', [], () => {
     );
     const docA = doc('collection/a', 1000, { v: 1 });
 
-    const docBLocal = doc(
-      'collection/b',
-      0,
-      { v: 1 },
-      { hasLocalMutations: true }
-    );
-    const docB = doc('collection/b', 2000, { v: 1 });
-
     return (
       client(0)
         .userListens(query)
